@@ -32,58 +32,156 @@ if not DB_URL:
     st.stop()
 
 # ------------------------------------------------------------
-# Theme: IIFL Finance-inspired palette -- deep navy blue (their
-# primary brand color) with warm gold/amber accent (echoes their
-# logo's gold-loan branding). Note: exact hex values below are a
-# close approximation, not pixel-sampled from the live site --
-# swap them for the exact brand hex codes if you have their
-# style guide during the internship.
+# Design tokens -- IIFL-inspired navy + gold, refined into a
+# proper institutional-finance palette (not just tinted ivory
+# everywhere). Approximate brand colors, not pixel-sampled --
+# swap for exact hex codes from IIFL's style guide if available.
 # ------------------------------------------------------------
-NAVY = "#0B2545"       # IIFL-style deep navy -- headings, primary text
-SLATE = "#5C7184"      # secondary text
-GOLD = "#D4A017"       # IIFL-style gold accent -- primary highlight (Gold product, positive)
-TEAL = "#1B6E7A"       # secondary accent (payout, DA)
-CORAL = "#C0392B"      # NPA / risk accent -- deeper red, closer to IIFL's warning tone
-CARD_BG = "#FAF7F0"    # warm ivory KPI card background (less flat than plain gray)
-BORDER = "#D8CFB8"     # warm-toned card / divider borders
-CHART_SEQ = ["#D4A017", "#0B2545", "#1B6E7A", "#C0392B", "#8FA6B3", "#B9CFC0"]
+NAVY = "#0A2647"          # primary brand -- headers, nav, emphasis
+NAVY_LIGHT = "#14375E"    # sidebar hover / active state
+INK = "#1C2B3A"           # body text
+SLATE = "#64748B"         # secondary / muted text
+GOLD = "#C99A2E"          # brand accent -- highlights, active markers
+GOLD_SOFT = "#F4E8CC"     # gold tint for subtle backgrounds
+TEAL = "#1D7A75"          # secondary data accent (DA, positive)
+CORAL = "#B3452C"         # risk / NPA / missing-data accent
+SURFACE = "#FFFFFF"       # card background -- clean white, not tinted
+PAGE_BG = "#F4F6F9"       # app background -- cool neutral, not warm ivory
+BORDER = "#E1E6ED"        # hairline borders
+CHART_SEQ = ["#C99A2E", "#0A2647", "#1D7A75", "#B3452C", "#7C93AC", "#D9C48A"]
 
 px.defaults.color_discrete_sequence = CHART_SEQ
 px.defaults.template = "plotly_white"
 
 st.markdown(f"""
 <style>
-    .stApp {{ background-color: #FCFDFE; }}
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500&display=swap');
+
+    html, body, [class*="css"] {{ font-family: 'Inter', -apple-system, sans-serif; }}
+    .stApp {{ background-color: {PAGE_BG}; }}
+    .block-container {{ padding-top: 1.5rem; max-width: 1200px; }}
+
+    /* ---- Sidebar ---- */
     section[data-testid="stSidebar"] {{
         background-color: {NAVY};
+        border-right: 1px solid {NAVY_LIGHT};
     }}
-    section[data-testid="stSidebar"] * {{ color: #EAF1F5 !important; }}
-    section[data-testid="stSidebar"] .stRadio > label {{ color: #EAF1F5 !important; }}
+    section[data-testid="stSidebar"] * {{ color: #DCE6F0 !important; }}
+    section[data-testid="stSidebar"] hr {{ border-color: {NAVY_LIGHT}; }}
+
+    /* Radio nav restyled as a vertical card list */
+    section[data-testid="stSidebar"] div[role="radiogroup"] {{ gap: 2px; }}
+    section[data-testid="stSidebar"] div[role="radiogroup"] label {{
+        background-color: transparent;
+        border-radius: 8px;
+        padding: 9px 12px !important;
+        margin: 0 !important;
+        transition: background-color 0.15s ease;
+        width: 100%;
+    }}
+    section[data-testid="stSidebar"] div[role="radiogroup"] label:hover {{
+        background-color: {NAVY_LIGHT};
+    }}
+    section[data-testid="stSidebar"] div[role="radiogroup"] label[data-checked="true"],
+    section[data-testid="stSidebar"] div[role="radiogroup"] label:has(input:checked) {{
+        background-color: {GOLD} !important;
+    }}
+    section[data-testid="stSidebar"] div[role="radiogroup"] label:has(input:checked) p {{
+        color: {NAVY} !important;
+        font-weight: 600 !important;
+    }}
+    section[data-testid="stSidebar"] .stExpander {{
+        border: 1px solid {NAVY_LIGHT};
+        border-radius: 8px;
+        background-color: {NAVY_LIGHT};
+    }}
+
+    /* ---- Header bar ---- */
+    .app-header {{
+        display: flex; align-items: center; gap: 12px;
+        padding-bottom: 4px; margin-bottom: 4px;
+    }}
+    .app-header .badge {{
+        background-color: {GOLD}; color: {NAVY}; font-weight: 700;
+        border-radius: 8px; width: 40px; height: 40px;
+        display: flex; align-items: center; justify-content: center;
+        font-size: 1.1rem; flex-shrink: 0;
+    }}
+    .app-header h1 {{ margin: 0 !important; font-size: 1.6rem !important; }}
+    .app-subtitle {{ color: {SLATE}; font-size: 0.92rem; margin-top: -2px; margin-bottom: 1.2rem; }}
+
+    /* ---- KPI cards ---- */
     div[data-testid="stMetric"] {{
-        background-color: {CARD_BG};
+        background-color: {SURFACE};
         border: 1px solid {BORDER};
+        border-top: 3px solid {GOLD};
         border-radius: 10px;
-        padding: 14px 16px 10px 16px;
+        padding: 16px 18px 12px 18px;
+        box-shadow: 0 1px 2px rgba(10,38,71,0.04);
     }}
-    div[data-testid="stMetricLabel"] {{ color: {SLATE} !important; font-weight: 500; }}
+    div[data-testid="stMetricLabel"] {{
+        color: {SLATE} !important; font-weight: 600 !important;
+        font-size: 0.78rem !important; text-transform: uppercase; letter-spacing: 0.03em;
+    }}
     div[data-testid="stMetricValue"] {{
         color: {NAVY} !important;
-        white-space: nowrap;
-        overflow: visible;
-        font-size: 1.5rem !important;
+        white-space: nowrap; overflow: visible;
+        font-size: 1.55rem !important; font-weight: 700 !important;
     }}
-    h1 {{ color: {NAVY}; font-weight: 600; }}
-    h2, h3 {{ color: {NAVY}; font-weight: 500; }}
+
+    /* ---- Typography ---- */
+    h1 {{ color: {NAVY}; font-weight: 700; letter-spacing: -0.01em; }}
+    h2, h3 {{ color: {NAVY}; font-weight: 600; }}
+    h4, h5, .stMarkdown strong {{ color: {NAVY}; }}
+    p, .stMarkdown, .stCaption {{ color: {INK}; }}
+
+    /* ---- Narrative / callout box ---- */
     .exec-narrative {{
-        background-color: #FFF8E7;
+        background-color: {GOLD_SOFT};
         border-left: 4px solid {GOLD};
-        border-radius: 6px;
-        padding: 16px 20px;
+        border-radius: 8px;
+        padding: 18px 22px;
         color: {NAVY};
         font-size: 0.95rem;
-        line-height: 1.6;
+        line-height: 1.65;
     }}
-    div[data-testid="stDataFrame"] {{ border: 1px solid {BORDER}; border-radius: 8px; }}
+
+    /* ---- Tables ---- */
+    div[data-testid="stDataFrame"] {{
+        border: 1px solid {BORDER}; border-radius: 10px; overflow: hidden;
+    }}
+
+    /* ---- Step / requirement cards (upload page) ---- */
+    .req-card {{
+        background-color: {SURFACE};
+        border: 1px solid {BORDER};
+        border-radius: 10px;
+        padding: 18px 20px;
+        margin-bottom: 10px;
+    }}
+    .req-card .req-num {{
+        display: inline-flex; align-items: center; justify-content: center;
+        background-color: {NAVY}; color: #fff; font-weight: 700;
+        width: 22px; height: 22px; border-radius: 50%;
+        font-size: 0.75rem; margin-right: 8px; flex-shrink: 0;
+    }}
+    .req-card code {{
+        background-color: {GOLD_SOFT}; color: {NAVY};
+        font-family: 'IBM Plex Mono', monospace; font-size: 0.82rem;
+        padding: 1px 5px; border-radius: 4px;
+    }}
+    .status-pill {{
+        display: inline-block; background-color: {PAGE_BG}; color: {NAVY};
+        border: 1px solid {BORDER}; border-radius: 12px;
+        padding: 2px 10px; font-size: 0.78rem; font-weight: 600; margin: 2px 4px 2px 0;
+    }}
+
+    /* ---- Buttons ---- */
+    .stButton > button {{
+        background-color: {NAVY}; color: #fff; border: none;
+        border-radius: 8px; font-weight: 600; padding: 0.5rem 1.2rem;
+    }}
+    .stButton > button:hover {{ background-color: {NAVY_LIGHT}; color: #fff; }}
 </style>
 """, unsafe_allow_html=True)
 
@@ -98,6 +196,13 @@ def fmt_cr(value, decimals=1):
     return f"₹{value:.{decimals}f} Cr"
 
 
+def page_header(title, subtitle=None):
+    st.markdown(f'<div class="app-header"><div class="badge">📊</div><h1>{title}</h1></div>',
+                unsafe_allow_html=True)
+    if subtitle:
+        st.markdown(f'<div class="app-subtitle">{subtitle}</div>', unsafe_allow_html=True)
+
+
 @st.cache_resource
 def get_conn():
     return psycopg2.connect(DB_URL)
@@ -107,13 +212,125 @@ def q(sql, params=None):
     return pd.read_sql(sql, get_conn(), params=params)
 
 
+def execute(sql, params=None):
+    """For INSERT/UPDATE statements -- not for use with pd.read_sql."""
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute(sql, params)
+    conn.commit()
+    cur.close()
+
+
+def log_action(username, action, target_table=None, target_key=None, detail=None):
+    """Write one row to auth.audit_log. Never raises -- an audit-log failure
+    should not block the underlying action, but is worth surfacing quietly."""
+    try:
+        execute("""
+            INSERT INTO auth.audit_log (username, action, target_table, target_key, detail)
+            VALUES (%s, %s, %s, %s, %s)
+        """, (username, action, target_table, target_key, detail))
+    except Exception as e:
+        st.caption(f"(audit log write failed: {e})")
+
+
+def check_login(username, password):
+    """Verify username/password against auth.users. Returns (full_name, role) on
+    success, None on failure. Password comparison happens via bcrypt, never
+    plaintext equality. Inactive users are rejected even with a correct password.
+    Every attempt -- success or failure -- is written to the audit log."""
+    import bcrypt
+    result = q("SELECT password_hash, full_name, role, is_active FROM auth.users WHERE username = %(u)s",
+               {"u": username})
+    if result.empty or not result.iloc[0]["is_active"]:
+        log_action(username, "LOGIN_FAILED", detail="unknown user or inactive")
+        return None
+    row = result.iloc[0]
+    if bcrypt.checkpw(password.encode("utf-8"), row["password_hash"].encode("utf-8")):
+        log_action(username, "LOGIN")
+        return row["full_name"], row["role"]
+    log_action(username, "LOGIN_FAILED", detail="bad password")
+    return None
+
+
+SESSION_TIMEOUT_MINUTES = 30
+
+
+def session_expired():
+    import time
+    last_active = st.session_state.get("last_active_ts")
+    if last_active is None:
+        return False
+    return (time.time() - last_active) > SESSION_TIMEOUT_MINUTES * 60
+
+
+def touch_session():
+    import time
+    st.session_state.last_active_ts = time.time()
+
+
 # ------------------------------------------------------------
-# Sidebar: global filters
+# Sidebar: global filters + login (role-aware: viewer / uploader / admin)
 # ------------------------------------------------------------
-st.sidebar.markdown("## NBFC Securitisation MIS")
-st.sidebar.caption("Treasury & DA management dashboard")
-st.sidebar.markdown("---")
-page = st.sidebar.radio("View", ["Management Summary", "Executive Review", "Data Quality"])
+st.sidebar.markdown("""
+<div style="display:flex;align-items:center;gap:10px;margin-bottom:2px;">
+    <div style="background-color:#C99A2E;color:#0A2647;font-weight:800;border-radius:8px;
+                width:34px;height:34px;display:flex;align-items:center;justify-content:center;
+                font-size:0.95rem;flex-shrink:0;">MIS</div>
+    <div>
+        <div style="font-weight:700;font-size:1.02rem;line-height:1.15;">NBFC Securitisation MIS</div>
+        <div style="font-size:0.72rem;opacity:0.75;">Treasury & DA management</div>
+    </div>
+</div>
+""", unsafe_allow_html=True)
+st.sidebar.markdown("<hr style='margin:14px 0 12px 0;'>", unsafe_allow_html=True)
+
+if "user_role" not in st.session_state:
+    st.session_state.user_role = None       # None | 'viewer' | 'uploader' | 'admin'
+    st.session_state.user_name = None
+    st.session_state.username = None
+    st.session_state.last_active_ts = None
+
+# Enforce session timeout -- auto-logout after inactivity, logged for the record.
+if st.session_state.user_role and session_expired():
+    log_action(st.session_state.username, "SESSION_TIMEOUT")
+    st.session_state.user_role = None
+    st.session_state.user_name = None
+    st.session_state.username = None
+    st.sidebar.warning(f"Session expired after {SESSION_TIMEOUT_MINUTES} min of inactivity. Please log in again.")
+
+with st.sidebar.expander("🔒 Account", expanded=False):
+    if st.session_state.user_role:
+        touch_session()
+        st.markdown(f"**{st.session_state.user_name}**")
+        st.caption(f"Role: {st.session_state.user_role.capitalize()}")
+        if st.button("Log out", use_container_width=True):
+            log_action(st.session_state.username, "LOGOUT")
+            st.session_state.user_role = None
+            st.session_state.user_name = None
+            st.session_state.username = None
+            st.rerun()
+    else:
+        login_user = st.text_input("Username", key="login_user")
+        login_pass = st.text_input("Password", type="password", key="login_pass")
+        if st.button("Log in", use_container_width=True):
+            result = check_login(login_user, login_pass)
+            if result:
+                full_name, role = result
+                st.session_state.user_role = role
+                st.session_state.user_name = full_name
+                st.session_state.username = login_user
+                touch_session()
+                st.rerun()
+            else:
+                st.error("Invalid username or password.")
+
+st.sidebar.markdown("<div style='height:6px;'></div>", unsafe_allow_html=True)
+page_options = ["Management Summary", "Executive Review", "Data Quality"]
+if st.session_state.user_role in ("uploader", "admin"):
+    page_options.append("Upload monthly MIS")
+if st.session_state.user_role == "admin":
+    page_options.append("User management")
+page = st.sidebar.radio("View", page_options, label_visibility="collapsed")
 
 months = q("SELECT DISTINCT month FROM raw.monthly_mis ORDER BY month DESC")["month"].tolist()
 investors = ["All Investors"] + sorted(
@@ -124,8 +341,8 @@ investors = ["All Investors"] + sorted(
 # PAGE 1: MANAGEMENT SUMMARY
 # ==============================================================
 if page == "Management Summary":
-    st.title("Investor-wise Securitisation & DA Management View")
-    st.caption("Live from the calculation layer — select an investor and month to filter every figure below.")
+    page_header("Investor-wise securitisation & DA management view",
+                "Select an investor and month to filter every figure below.")
 
     col1, col2 = st.columns(2)
     with col1:
@@ -203,8 +420,8 @@ if page == "Management Summary":
 # PAGE 2: EXECUTIVE REVIEW
 # ==============================================================
 elif page == "Executive Review":
-    st.title("Bank relationship — consolidated executive review")
-    st.caption("Portfolio KPIs, financial-year and quarter-on-quarter performance, and an auto-generated summary.")
+    page_header("Bank relationship — consolidated executive review",
+                "Portfolio KPIs, financial-year and quarter-on-quarter performance, and an auto-generated summary.")
 
     selected_bank = st.selectbox("Select investor / bank", investors, key="exec_bank")
 
@@ -262,7 +479,7 @@ elif page == "Executive Review":
         st.markdown(f'<div class="exec-narrative">{narrative}</div>', unsafe_allow_html=True)
 
     st.divider()
-    st.subheader("Table 1 — Financial Year-Wise Performance")
+    st.subheader("Table 1 — financial year-wise performance")
     fy_df = q("SELECT * FROM calc.executive_review_fy ORDER BY fy" if selected_bank == "All Investors" else """
         SELECT d.fy,
                count(*) AS deals,
@@ -274,7 +491,7 @@ elif page == "Executive Review":
     """, params if selected_bank != "All Investors" else None)
     st.dataframe(fy_df, use_container_width=True)
 
-    st.subheader("Table 2 — Quarter-on-Quarter Performance")
+    st.subheader("Table 2 — quarter-on-quarter performance")
     qoq_df = q("SELECT * FROM calc.executive_review_qoq ORDER BY quarter" if selected_bank == "All Investors" else """
         SELECT d.period AS quarter, count(*) AS deals,
                sum(d.amount_securitised_deal_date) AS deal_value
@@ -289,12 +506,10 @@ elif page == "Executive Review":
 # ==============================================================
 # PAGE 3: DATA QUALITY
 # ==============================================================
-else:
-    st.title("Data Quality Overview")
-    st.caption(
-        "Mirrors the original workbook's explicit distinction between missing and zero data "
-        "(e.g. deleted payout source columns were shown as unavailable, never zero)."
-    )
+elif page == "Data Quality":
+    page_header("Data quality overview",
+                "Mirrors the original workbook's distinction between missing and zero data — "
+                "deleted payout source columns were shown as unavailable, never zero.")
 
     dq_df = q("""
         SELECT data_status, count(*) AS row_count
@@ -321,3 +536,190 @@ else:
         LIMIT 15
     """)
     st.dataframe(gap_df, use_container_width=True)
+
+# ==============================================================
+# PAGE 4: UPLOAD MONTHLY MIS (admin-only)
+# ==============================================================
+elif page == "Upload monthly MIS":
+    # Hard server-side gate -- never trust that the sidebar only showed this
+    # page to uploaders/admins. session_state can't be forged by a normal
+    # user, but this check is what actually blocks the write, not the radio options.
+    if st.session_state.user_role not in ("uploader", "admin"):
+        st.error("You must be logged in as an uploader or admin to access this page.")
+        st.stop()
+
+    page_header("Upload monthly MIS",
+                f"Signed in as {st.session_state.user_name} ({st.session_state.user_role}) "
+                f"· uploads insert directly into raw.monthly_mis")
+
+    st.markdown(f"""
+    <div class="req-card">
+        <div style="margin-bottom:10px;"><span class="req-num">1</span><strong>Prepare a CSV with a header row</strong></div>
+        <div style="margin-left:30px;color:{SLATE};font-size:0.88rem;line-height:1.7;">
+            <code>deal_id</code> · <code>month</code> · <code>total_pool_outstanding</code> ·
+            <code>closing_pos_investor_share</code> · <code>total_bank_payout</code> ·
+            <code>total_principal_payout</code> · <code>npa_amount</code> · <code>mclr</code> ·
+            <code>roi</code> · <code>investor_share_x_roi</code> · <code>data_status</code>
+        </div>
+    </div>
+    <div class="req-card">
+        <div style="margin-bottom:10px;"><span class="req-num">2</span><strong>Follow these rules</strong></div>
+        <div style="margin-left:30px;color:{SLATE};font-size:0.88rem;line-height:1.9;">
+            <code>month</code> is the first day of the month — e.g. <code>2026-08-01</code><br>
+            <code>deal_id</code> must already exist in <code>raw.deals</code> — register new deals separately<br>
+            Leave numeric fields <strong>blank</strong> for Missing / Incomplete rows — never enter 0
+        </div>
+    </div>
+    <div class="req-card">
+        <div style="margin-bottom:10px;"><span class="req-num">3</span><strong>Valid <code>data_status</code> values</strong></div>
+        <div style="margin-left:30px;">
+            <span class="status-pill">Available</span><span class="status-pill">Zero</span>
+            <span class="status-pill">Missing</span><span class="status-pill">Incomplete</span>
+            <span class="status-pill">Not Applicable</span><span class="status-pill">Reconciliation Required</span>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
+    st.markdown("##### Upload file")
+    uploaded = st.file_uploader("Choose a CSV file", type="csv", label_visibility="collapsed")
+
+    if uploaded is not None:
+        try:
+            new_df = pd.read_csv(uploaded)
+        except Exception as e:
+            st.error(f"Could not read CSV: {e}")
+            st.stop()
+
+        required_cols = ["deal_id", "month", "total_pool_outstanding", "closing_pos_investor_share",
+                          "total_bank_payout", "total_principal_payout", "npa_amount", "mclr", "roi",
+                          "investor_share_x_roi", "data_status"]
+        missing_cols = [c for c in required_cols if c not in new_df.columns]
+        if missing_cols:
+            st.error(f"CSV is missing required columns: {', '.join(missing_cols)}")
+            st.stop()
+
+        st.write(f"Preview — {len(new_df)} row(s):")
+        st.dataframe(new_df, use_container_width=True)
+
+        # Validate deal_ids exist before allowing insert -- catches typos
+        # early rather than failing halfway through a partial load.
+        known_deals = set(q("SELECT deal_id FROM raw.deals")["deal_id"])
+        unknown = set(new_df["deal_id"]) - known_deals
+        if unknown:
+            st.error(f"These deal_id(s) are not registered in raw.deals: {', '.join(sorted(unknown))}")
+            st.stop()
+
+        if st.button(f"Confirm and insert {len(new_df)} row(s)"):
+            conn = get_conn()
+            cur = conn.cursor()
+            inserted, skipped = 0, 0
+            for _, r in new_df.iterrows():
+                try:
+                    cur.execute("""
+                        INSERT INTO raw.monthly_mis
+                            (deal_id, month, total_pool_outstanding, closing_pos_investor_share,
+                             total_bank_payout, total_principal_payout, npa_amount, mclr, roi,
+                             investor_share_x_roi, data_status)
+                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                        ON CONFLICT (deal_id, month) DO UPDATE SET
+                            total_pool_outstanding = EXCLUDED.total_pool_outstanding,
+                            closing_pos_investor_share = EXCLUDED.closing_pos_investor_share,
+                            total_bank_payout = EXCLUDED.total_bank_payout,
+                            total_principal_payout = EXCLUDED.total_principal_payout,
+                            npa_amount = EXCLUDED.npa_amount,
+                            mclr = EXCLUDED.mclr, roi = EXCLUDED.roi,
+                            investor_share_x_roi = EXCLUDED.investor_share_x_roi,
+                            data_status = EXCLUDED.data_status
+                    """, (
+                        r["deal_id"], r["month"],
+                        None if pd.isna(r["total_pool_outstanding"]) else r["total_pool_outstanding"],
+                        None if pd.isna(r["closing_pos_investor_share"]) else r["closing_pos_investor_share"],
+                        None if pd.isna(r["total_bank_payout"]) else r["total_bank_payout"],
+                        None if pd.isna(r["total_principal_payout"]) else r["total_principal_payout"],
+                        None if pd.isna(r["npa_amount"]) else r["npa_amount"],
+                        None if pd.isna(r["mclr"]) else r["mclr"],
+                        None if pd.isna(r["roi"]) else r["roi"],
+                        None if pd.isna(r["investor_share_x_roi"]) else r["investor_share_x_roi"],
+                        r["data_status"],
+                    ))
+                    inserted += 1
+                    log_action(st.session_state.username, "UPSERT", "raw.monthly_mis",
+                               f"{r['deal_id']} / {r['month']}",
+                               f"data_status={r['data_status']}")
+                except Exception as e:
+                    skipped += 1
+                    st.warning(f"Row for {r['deal_id']} / {r['month']} failed: {e}")
+            conn.commit()
+            cur.close()
+            log_action(st.session_state.username, "UPLOAD_BATCH", "raw.monthly_mis",
+                       detail=f"file={uploaded.name}, inserted={inserted}, skipped={skipped}")
+            st.success(f"Inserted/updated {inserted} row(s). {skipped} row(s) skipped due to errors.")
+            st.cache_resource.clear()
+
+# ==============================================================
+# PAGE 5: USER MANAGEMENT (admin-only)
+# ==============================================================
+elif page == "User management":
+    if st.session_state.user_role != "admin":
+        st.error("You must be logged in as an admin to access this page.")
+        st.stop()
+
+    page_header("User management", "Create users, change roles, deactivate access, and review the audit trail.")
+
+    st.markdown("##### Existing users")
+    users_df = q("SELECT username, full_name, role, is_active, created_at FROM auth.users ORDER BY created_at")
+    st.dataframe(users_df, use_container_width=True)
+
+    st.markdown("<div style='height:6px;'></div>", unsafe_allow_html=True)
+    st.markdown("##### Create a new user")
+    with st.form("create_user_form"):
+        c1, c2 = st.columns(2)
+        new_username = c1.text_input("Username")
+        new_full_name = c2.text_input("Full name")
+        c3, c4 = st.columns(2)
+        new_role = c3.selectbox("Role", ["viewer", "uploader", "admin"])
+        new_password = c4.text_input("Temporary password", type="password")
+        submitted = st.form_submit_button("Create user")
+
+        if submitted:
+            if not new_username or not new_password:
+                st.error("Username and password are required.")
+            elif len(new_password) < 8:
+                st.error("Password must be at least 8 characters.")
+            else:
+                import bcrypt
+                pw_hash = bcrypt.hashpw(new_password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+                try:
+                    execute("""
+                        INSERT INTO auth.users (username, password_hash, full_name, role, created_by)
+                        VALUES (%s, %s, %s, %s, %s)
+                    """, (new_username, pw_hash, new_full_name, new_role, st.session_state.username))
+                    log_action(st.session_state.username, "USER_CREATED", "auth.users", new_username,
+                               f"role={new_role}")
+                    st.success(f"User '{new_username}' created with role '{new_role}'.")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Could not create user: {e}")
+
+    st.markdown("<div style='height:6px;'></div>", unsafe_allow_html=True)
+    st.markdown("##### Deactivate a user")
+    active_usernames = users_df.loc[users_df["is_active"], "username"].tolist()
+    if active_usernames:
+        deactivate_target = st.selectbox("Select user to deactivate", active_usernames)
+        if st.button("Deactivate", type="secondary"):
+            if deactivate_target == st.session_state.username:
+                st.error("You cannot deactivate your own account.")
+            else:
+                execute("UPDATE auth.users SET is_active = false WHERE username = %s", (deactivate_target,))
+                log_action(st.session_state.username, "USER_DEACTIVATED", "auth.users", deactivate_target)
+                st.success(f"'{deactivate_target}' deactivated.")
+                st.rerun()
+
+    st.divider()
+    st.markdown("##### Recent audit log")
+    audit_df = q("""
+        SELECT occurred_at, username, action, target_table, target_key, detail
+        FROM auth.audit_log ORDER BY occurred_at DESC LIMIT 100
+    """)
+    st.dataframe(audit_df, use_container_width=True, height=350)
