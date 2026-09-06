@@ -35,23 +35,28 @@ if not DB_URL:
     st.stop()
 
 # ------------------------------------------------------------
-# Design tokens -- IIFL-inspired navy + gold, refined into a
-# proper institutional-finance palette (not just tinted ivory
-# everywhere). Approximate brand colors, not pixel-sampled --
-# swap for exact hex codes from IIFL's style guide if available.
+# Design tokens -- institutional-finance palette: light surfaces,
+# navy as the single brand/ink color, gold reserved for two small
+# accent badges only (not large blocks). Categorical chart colors
+# (CHART_SEQ) are the dataviz skill's validated 7-slot order, run
+# through scripts/validate_palette.js against this app's own white
+# card surface (all hard gates pass; three of the seven -- aqua,
+# yellow, magenta -- sit under 3:1 contrast on white, so every chart
+# using them keeps visible on-chart labels rather than relying on a
+# hover-only legend, per the skill's "relief rule").
 # ------------------------------------------------------------
-NAVY = "#0A2647"          # primary brand -- headers, nav, emphasis
-NAVY_LIGHT = "#14375E"    # sidebar hover / active state
-INK = "#1C2B3A"           # body text
-SLATE = "#64748B"         # secondary / muted text
-GOLD = "#C99A2E"          # brand accent -- highlights, active markers
-GOLD_SOFT = "#F4E8CC"     # gold tint for subtle backgrounds
-TEAL = "#1D7A75"          # secondary data accent (DA, positive)
-CORAL = "#B3452C"         # risk / NPA / missing-data accent
-SURFACE = "#FFFFFF"       # card background -- clean white, not tinted
-PAGE_BG = "#F4F6F9"       # app background -- cool neutral, not warm ivory
-BORDER = "#E1E6ED"        # hairline borders
-CHART_SEQ = ["#C99A2E", "#0A2647", "#1D7A75", "#B3452C", "#7C93AC", "#D9C48A"]
+INK = "#101828"           # primary text / headings
+NAVY = "#173A66"          # brand / active states / primary buttons
+NAVY_SOFT = "#EAF1FC"     # light navy tint -- active nav item, callout backgrounds
+SLATE = "#5B6472"         # secondary / muted text
+GOLD = "#B8862E"          # accent -- reserved for two small badge chips only
+GOLD_SOFT = "#FBF3E1"     # gold tint, used sparingly
+TEAL = "#0F8F82"          # secondary data accent (DA, positive)
+CORAL = "#D6493B"         # risk / NPA / missing-data accent
+SURFACE = "#FFFFFF"       # card background
+PAGE_BG = "#F7F8FA"       # app background -- light, airy neutral
+BORDER = "#E5E8EC"        # hairline borders
+CHART_SEQ = ["#2A78D6", "#EB6834", "#1BAF7A", "#EDA100", "#E87BA4", "#4A3AA7", "#E34948"]
 
 px.defaults.color_discrete_sequence = CHART_SEQ
 px.defaults.template = "plotly_white"
@@ -62,41 +67,45 @@ st.markdown(f"""
 
     html, body, [class*="css"] {{ font-family: 'Inter', -apple-system, sans-serif; }}
     .stApp {{ background-color: {PAGE_BG}; }}
-    .block-container {{ padding-top: 1.5rem; max-width: 1200px; }}
+    .block-container {{ padding-top: 1.75rem; max-width: 1280px; }}
 
-    /* ---- Sidebar ---- */
+    /* ---- Sidebar -- light, not a solid dark block ---- */
     section[data-testid="stSidebar"] {{
-        background-color: {NAVY};
-        border-right: 1px solid {NAVY_LIGHT};
+        background-color: {SURFACE};
+        border-right: 1px solid {BORDER};
     }}
-    section[data-testid="stSidebar"] * {{ color: #DCE6F0 !important; }}
-    section[data-testid="stSidebar"] hr {{ border-color: {NAVY_LIGHT}; }}
+    section[data-testid="stSidebar"] * {{ color: {INK} !important; }}
+    section[data-testid="stSidebar"] hr {{ border-color: {BORDER}; }}
+    .sidebar-tagline {{ color: {SLATE} !important; }}
 
-    /* Radio nav restyled as a vertical card list */
+    /* Radio nav restyled as a vertical list, active item picked out with
+       a soft navy tint + left rule rather than a solid color block */
     section[data-testid="stSidebar"] div[role="radiogroup"] {{ gap: 2px; }}
     section[data-testid="stSidebar"] div[role="radiogroup"] label {{
         background-color: transparent;
         border-radius: 8px;
         padding: 9px 12px !important;
         margin: 0 !important;
-        transition: background-color 0.15s ease;
+        border-left: 3px solid transparent;
+        transition: background-color 0.15s ease, border-color 0.15s ease;
         width: 100%;
     }}
     section[data-testid="stSidebar"] div[role="radiogroup"] label:hover {{
-        background-color: {NAVY_LIGHT};
+        background-color: {PAGE_BG};
     }}
     section[data-testid="stSidebar"] div[role="radiogroup"] label[data-checked="true"],
     section[data-testid="stSidebar"] div[role="radiogroup"] label:has(input:checked) {{
-        background-color: {GOLD} !important;
+        background-color: {NAVY_SOFT} !important;
+        border-left: 3px solid {NAVY};
     }}
     section[data-testid="stSidebar"] div[role="radiogroup"] label:has(input:checked) p {{
         color: {NAVY} !important;
         font-weight: 600 !important;
     }}
     section[data-testid="stSidebar"] .stExpander {{
-        border: 1px solid {NAVY_LIGHT};
+        border: 1px solid {BORDER};
         border-radius: 8px;
-        background-color: {NAVY_LIGHT};
+        background-color: {PAGE_BG};
     }}
 
     /* ---- Header bar ---- */
@@ -105,7 +114,7 @@ st.markdown(f"""
         padding-bottom: 4px; margin-bottom: 4px;
     }}
     .app-header .badge {{
-        background-color: {GOLD}; color: {NAVY}; font-weight: 700;
+        background-color: {GOLD}; color: #fff; font-weight: 700;
         border-radius: 8px; width: 40px; height: 40px;
         display: flex; align-items: center; justify-content: center;
         font-size: 1.1rem; flex-shrink: 0;
@@ -113,38 +122,49 @@ st.markdown(f"""
     .app-header h1 {{ margin: 0 !important; font-size: 1.6rem !important; }}
     .app-subtitle {{ color: {SLATE}; font-size: 0.92rem; margin-top: -2px; margin-bottom: 1.2rem; }}
 
-    /* ---- KPI cards ---- */
+    /* ---- KPI cards -- plain and light, no loud color bars ---- */
     div[data-testid="stMetric"] {{
         background-color: {SURFACE};
         border: 1px solid {BORDER};
-        border-top: 3px solid {GOLD};
         border-radius: 10px;
-        padding: 16px 18px 12px 18px;
-        box-shadow: 0 1px 2px rgba(10,38,71,0.04);
+        padding: 16px 18px 14px 18px;
+        box-shadow: 0 1px 2px rgba(16,24,40,0.04);
     }}
     div[data-testid="stMetricLabel"] {{
         color: {SLATE} !important; font-weight: 600 !important;
-        font-size: 0.78rem !important; text-transform: uppercase; letter-spacing: 0.03em;
+        font-size: 0.76rem !important; text-transform: uppercase; letter-spacing: 0.03em;
+    }}
+    /* Streamlit's own base styling can ellipsis-truncate a metric value in
+       a narrow column -- override every layer explicitly (the value can
+       be wrapped in an extra inner div depending on Streamlit version) so
+       a number is NEVER clipped with "...", only ever wrapped to a second
+       line in the rare case it's genuinely too wide. */
+    div[data-testid="stMetricValue"],
+    div[data-testid="stMetricValue"] * {{
+        white-space: normal !important;
+        overflow: visible !important;
+        text-overflow: clip !important;
+        word-break: break-word !important;
     }}
     div[data-testid="stMetricValue"] {{
         color: {NAVY} !important;
-        white-space: nowrap; overflow: visible;
-        font-size: 1.55rem !important; font-weight: 700 !important;
+        font-size: 1.4rem !important; font-weight: 700 !important;
+        line-height: 1.3 !important;
     }}
 
     /* ---- Typography ---- */
-    h1 {{ color: {NAVY}; font-weight: 700; letter-spacing: -0.01em; }}
-    h2, h3 {{ color: {NAVY}; font-weight: 600; }}
-    h4, h5, .stMarkdown strong {{ color: {NAVY}; }}
+    h1 {{ color: {INK}; font-weight: 700; letter-spacing: -0.01em; }}
+    h2, h3 {{ color: {INK}; font-weight: 600; }}
+    h4, h5, .stMarkdown strong {{ color: {INK}; }}
     p, .stMarkdown, .stCaption {{ color: {INK}; }}
 
     /* ---- Narrative / callout box ---- */
     .exec-narrative {{
-        background-color: {GOLD_SOFT};
-        border-left: 4px solid {GOLD};
+        background-color: {NAVY_SOFT};
+        border-left: 4px solid {NAVY};
         border-radius: 8px;
         padding: 18px 22px;
-        color: {NAVY};
+        color: {INK};
         font-size: 0.95rem;
         line-height: 1.65;
     }}
@@ -169,7 +189,7 @@ st.markdown(f"""
         font-size: 0.75rem; margin-right: 8px; flex-shrink: 0;
     }}
     .req-card code {{
-        background-color: {GOLD_SOFT}; color: {NAVY};
+        background-color: {PAGE_BG}; color: {NAVY};
         font-family: 'IBM Plex Mono', monospace; font-size: 0.82rem;
         padding: 1px 5px; border-radius: 4px;
     }}
@@ -184,7 +204,7 @@ st.markdown(f"""
         background-color: {NAVY}; color: #fff; border: none;
         border-radius: 8px; font-weight: 600; padding: 0.5rem 1.2rem;
     }}
-    .stButton > button:hover {{ background-color: {NAVY_LIGHT}; color: #fff; }}
+    .stButton > button:hover {{ background-color: #0F2C52; color: #fff; }}
 </style>
 """, unsafe_allow_html=True)
 
@@ -211,17 +231,38 @@ def get_conn():
     return psycopg2.connect(DB_URL)
 
 
+def _reconnect():
+    """Neon's free-tier compute auto-suspends after a few minutes idle,
+    which silently kills whatever connection get_conn() had cached --
+    the next query then raises OperationalError/InterfaceError ("SSL
+    connection has been closed unexpectedly"), not because anything is
+    misconfigured. Clearing the cached resource forces a fresh connect
+    on the next get_conn() call."""
+    get_conn.clear()
+    return get_conn()
+
+
 def q(sql, params=None):
-    return pd.read_sql(sql, get_conn(), params=params)
+    try:
+        return pd.read_sql(sql, get_conn(), params=params)
+    except (psycopg2.OperationalError, psycopg2.InterfaceError):
+        return pd.read_sql(sql, _reconnect(), params=params)
 
 
 def execute(sql, params=None):
     """For INSERT/UPDATE statements -- not for use with pd.read_sql."""
-    conn = get_conn()
-    cur = conn.cursor()
-    cur.execute(sql, params)
-    conn.commit()
-    cur.close()
+    try:
+        conn = get_conn()
+        cur = conn.cursor()
+        cur.execute(sql, params)
+        conn.commit()
+        cur.close()
+    except (psycopg2.OperationalError, psycopg2.InterfaceError):
+        conn = _reconnect()
+        cur = conn.cursor()
+        cur.execute(sql, params)
+        conn.commit()
+        cur.close()
 
 
 def log_action(username, action, target_table=None, target_key=None, detail=None):
@@ -274,14 +315,14 @@ def touch_session():
 # ------------------------------------------------------------
 # Sidebar: global filters + login (role-aware: viewer / uploader / admin)
 # ------------------------------------------------------------
-st.sidebar.markdown("""
+st.sidebar.markdown(f"""
 <div style="display:flex;align-items:center;gap:10px;margin-bottom:2px;">
-    <div style="background-color:#C99A2E;color:#0A2647;font-weight:800;border-radius:8px;
+    <div style="background-color:{GOLD};color:#fff;font-weight:800;border-radius:8px;
                 width:34px;height:34px;display:flex;align-items:center;justify-content:center;
                 font-size:0.95rem;flex-shrink:0;">MIS</div>
     <div>
-        <div style="font-weight:700;font-size:1.02rem;line-height:1.15;">NBFC Securitisation MIS</div>
-        <div style="font-size:0.72rem;opacity:0.75;">Treasury & DA management</div>
+        <div style="font-weight:700;font-size:1.02rem;line-height:1.15;color:{INK};">NBFC Securitisation MIS</div>
+        <div class="sidebar-tagline" style="font-size:0.72rem;">Treasury & DA management</div>
     </div>
 </div>
 """, unsafe_allow_html=True)
@@ -376,10 +417,11 @@ if page == "Management Summary":
         st.warning("No data for this investor/month combination.")
     else:
         row = kpi_df.iloc[0]
-        c1, c2, c3, c4, c5, c6 = st.columns(6)
+        c1, c2, c3 = st.columns(3)
         c1.metric("Total deals", int(row["total_deals"] or 0))
         c2.metric("Active deals", int(row["active_deals"] or 0))
         c3.metric("Total deal amount", fmt_cr(row["total_deal_amount"]))
+        c4, c5, c6 = st.columns(3)
         c4.metric("Investor POS", fmt_cr(row["investor_pos"]))
         c5.metric("Payout", fmt_cr(row["payout"], decimals=2))
         c6.metric("NPA", fmt_cr(row["npa"], decimals=2))
