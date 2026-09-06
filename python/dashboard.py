@@ -24,6 +24,9 @@ import psycopg2
 import streamlit as st
 import plotly.express as px
 
+import risk_metrics
+import stress_engine
+
 st.set_page_config(page_title="NBFC Securitisation MIS", layout="wide", page_icon="📊")
 
 DB_URL = os.environ.get("NBFC_MIS_DB_URL")
@@ -325,7 +328,9 @@ with st.sidebar.expander("🔒 Account", expanded=False):
                 st.error("Invalid username or password.")
 
 st.sidebar.markdown("<div style='height:6px;'></div>", unsafe_allow_html=True)
-page_options = ["Management Summary", "Executive Review", "Data Quality"]
+page_options = ["Management Summary", "Executive Review", "Data Quality",
+                 "Waterfall & Credit Enhancement", "Credit Performance", "Stress Testing",
+                 "Funding & ALM", "Regulatory Compliance"]
 if st.session_state.user_role in ("uploader", "admin"):
     page_options.append("Upload monthly MIS")
 if st.session_state.user_role == "admin":
@@ -538,7 +543,641 @@ elif page == "Data Quality":
     st.dataframe(gap_df, use_container_width=True)
 
 # ==============================================================
-# PAGE 4: UPLOAD MONTHLY MIS (admin-only)
+# PAGE 4: WATERFALL & CREDIT ENHANCEMENT
+# Reads raw.monthly_waterfall + raw.deals / calc.ce_cover_ratio_trend
+# (sql/05_schema_waterfall.sql). Only PTC deals with a tranche appear
+# here -- DA deals have no waterfall row by design (see that file's
+# assumption #9). Same "zero business logic in this file" rule as the
+# rest of the dashboard: every number is a straight read from calc.*.
+# ==============================================================
+elif page == "Waterfall & Credit Enhancement":
+    page_header("Waterfall & credit enhancement",
+                "PTC deals only — DA deals aren't tranched and carry no CE waterfall. "
+                "Pick a deal to see its monthly payment priority and CE cover ratio trend.")
+
+    wf_deals = q("""
+        SELECT DISTINCT d.deal_id, d.deal_name, d.tranche, d.credit_enhancement_type,
+               d.credit_enhancement_initial_amount, d.investor_name
+        FROM raw.deals d
+        JOIN raw.monthly_waterfall w ON w.deal_id = d.deal_id
+        ORDER BY d.deal_name
+    """)
+
+    if wf_deals.empty:
+        st.info("No monthly_waterfall data found yet — run generate_synthetic_data.py "
+                "and load_to_postgres.py after applying sql/05_schema_waterfall.sql.")
+    else:
+        deal_label = {
+            row.deal_id: f"{row.deal_name} · {row.tranche} · {row.credit_enhancement_type}"
+            for row in wf_deals.itertuples()
+        }
+        selected_deal_id = st.selectbox(
+            "Select deal", wf_deals["deal_id"], format_func=lambda x: deal_label[x]
+        )
+        deal_row = wf_deals.loc[wf_deals["deal_id"] == selected_deal_id].iloc[0]
+
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Tranche", deal_row["tranche"])
+        c2.metric("CE type", deal_row["credit_enhancement_type"])
+        c3.metric("CE initial amount", fmt_cr(deal_row["credit_enhancement_initial_amount"], decimals=2))
+
+        st.divider()
+
+        wf_hist = q("""
+            SELECT month, collections_available, servicing_fee_paid, senior_interest_paid,
+                   senior_principal_paid, subordinate_interest_paid, subordinate_principal_paid,
+                   excess_spread_to_originator, ce_opening_balance, ce_drawn_this_month,
+                   ce_closing_balance, ce_cover_ratio
+            FROM raw.monthly_waterfall
+            WHERE deal_id = %(d)s ORDER BY month
+        """, {"d": selected_deal_id})
+
+        st.subheader("Monthly waterfall")
+        selected_wf_month = st.selectbox(
+            "Select month", wf_hist["month"], format_func=lambda d: d.strftime("%b-%y"),
+            index=len(wf_hist) - 1,
+        )
+        month_row = wf_hist.loc[wf_hist["month"] == selected_wf_month].iloc[0]
+
+        # Priority order, top to bottom -- see assumption #5 in
+        # sql/05_schema_waterfall.sql (standard convention, not confirmed
+        # against a specific deal's payment waterfall clause).
+        waterfall_lines = pd.DataFrame([
+            {"line": "Servicing fee", "amount": month_row["servicing_fee_paid"]},
+            {"line": "Senior interest", "amount": month_row["senior_interest_paid"]},
+            {"line": "Senior principal", "amount": month_row["senior_principal_paid"]},
+            {"line": "Subordinate interest", "amount": month_row["subordinate_interest_paid"]},
+            {"line": "Subordinate principal", "amount": month_row["subordinate_principal_paid"]},
+            {"line": "Excess spread to originator", "amount": month_row["excess_spread_to_originator"]},
+        ])
+        fig = px.bar(waterfall_lines, x="amount", y="line", orientation="h",
+                     color="line", color_discrete_sequence=CHART_SEQ)
+        fig.update_layout(showlegend=False, margin=dict(t=10, b=10, l=10, r=10), height=320,
+                           xaxis_title="Rs. Crs", yaxis_title="", yaxis=dict(categoryorder="array",
+                           categoryarray=waterfall_lines["line"].tolist()[::-1]))
+        st.plotly_chart(fig, use_container_width=True)
+
+        cA, cB, cC = st.columns(3)
+        cA.metric("Collections available", fmt_cr(month_row["collections_available"], decimals=2))
+        cB.metric("CE drawn this month", fmt_cr(month_row["ce_drawn_this_month"], decimals=3))
+        cC.metric("CE closing balance", fmt_cr(month_row["ce_closing_balance"], decimals=2))
+        if month_row["ce_drawn_this_month"] and month_row["ce_drawn_this_month"] > 0:
+            st.warning(f"CE was drawn this month — a rough-collections month "
+                       f"(proxied by elevated NPA; see assumption #6 in sql/05_schema_waterfall.sql).")
+
+        st.divider()
+        st.subheader("CE cover ratio trend")
+        if deal_row["tranche"] == "Subordinate":
+            st.caption("This is a Subordinate-tranche deal — there's no linked senior tranche's "
+                       "POS in this schema to compute a cover ratio against (see assumption #2/#8 "
+                       "in sql/05_schema_waterfall.sql), so it isn't shown here.")
+        else:
+            threshold = st.slider("Flag threshold (CE cover ratio, x)", 0.0, 3.0, 1.0, 0.1)
+            cover_df = wf_hist.dropna(subset=["ce_cover_ratio"])
+            fig2 = px.line(cover_df, x="month", y="ce_cover_ratio", markers=True)
+            fig2.update_traces(line_color=NAVY, marker=dict(color=NAVY))
+            fig2.add_hline(y=threshold, line_dash="dash", line_color=CORAL,
+                            annotation_text=f"Threshold {threshold:.1f}x", annotation_position="top left")
+            fig2.update_layout(margin=dict(t=10, b=10, l=10, r=10), height=340,
+                                xaxis_title="", yaxis_title="CE cover ratio (x)")
+            st.plotly_chart(fig2, use_container_width=True)
+
+            breaches = cover_df.loc[cover_df["ce_cover_ratio"] < threshold]
+            if not breaches.empty:
+                st.error(f"CE cover ratio fell below {threshold:.1f}x in "
+                         f"{len(breaches)} month(s), most recently "
+                         f"{breaches['month'].max().strftime('%b-%y')}.")
+            else:
+                st.success(f"CE cover ratio has stayed at or above {threshold:.1f}x throughout.")
+
+# ==============================================================
+# PAGE 5: CREDIT PERFORMANCE
+# Reads raw.monthly_delinquency, calc.roll_rate_*, calc.vintage_default_curve,
+# and calc.deal_smm_cpr (sql/06_schema_delinquency.sql). CPR/WAL math lives
+# in risk_metrics.py, not here or in SQL -- see that module's docstring
+# for the WAL closed-form assumption and the SMM/CPR convention used.
+# ==============================================================
+elif page == "Credit Performance":
+    page_header("Credit performance — DPD, roll rates, vintages, CPR/WAL",
+                "All instrument types (DPD isn't a PTC-only concept). "
+                "See risk_metrics.py and sql/06_schema_delinquency.sql for the methodology and caveats.")
+
+    dq_deals = q("""
+        SELECT DISTINCT d.deal_id, d.deal_name
+        FROM raw.deals d JOIN raw.monthly_delinquency dq ON dq.deal_id = d.deal_id
+        ORDER BY d.deal_name
+    """)
+
+    if dq_deals.empty:
+        st.info("No monthly_delinquency data found yet — run generate_synthetic_data.py "
+                "and load_to_postgres.py after applying sql/06_schema_delinquency.sql.")
+    else:
+        st.subheader("DPD bucket trend")
+        dpd_options = ["Pool-wide (all deals)"] + dq_deals["deal_id"].tolist()
+        dpd_labels = {"Pool-wide (all deals)": "Pool-wide (all deals)",
+                      **dict(zip(dq_deals["deal_id"], dq_deals["deal_name"]))}
+        dpd_choice = st.selectbox("Select deal", dpd_options, format_func=lambda x: dpd_labels[x],
+                                    key="dpd_deal")
+
+        if dpd_choice == "Pool-wide (all deals)":
+            dpd_df = q("""
+                SELECT month, SUM(pos_0dpd) AS pos_0dpd, SUM(pos_1_30dpd) AS pos_1_30dpd,
+                       SUM(pos_31_60dpd) AS pos_31_60dpd, SUM(pos_61_90dpd) AS pos_61_90dpd,
+                       SUM(pos_90plus_dpd) AS pos_90plus_dpd
+                FROM raw.monthly_delinquency GROUP BY month ORDER BY month
+            """)
+        else:
+            dpd_df = q("""
+                SELECT month, pos_0dpd, pos_1_30dpd, pos_31_60dpd, pos_61_90dpd, pos_90plus_dpd
+                FROM raw.monthly_delinquency WHERE deal_id = %(d)s ORDER BY month
+            """, {"d": dpd_choice})
+
+        dpd_long = dpd_df.melt(id_vars="month",
+                                value_vars=["pos_0dpd", "pos_1_30dpd", "pos_31_60dpd", "pos_61_90dpd", "pos_90plus_dpd"],
+                                var_name="bucket", value_name="pos")
+        bucket_labels = {"pos_0dpd": "Current", "pos_1_30dpd": "1-30 DPD", "pos_31_60dpd": "31-60 DPD",
+                          "pos_61_90dpd": "61-90 DPD", "pos_90plus_dpd": "90+ DPD"}
+        dpd_long["bucket"] = dpd_long["bucket"].map(bucket_labels)
+        fig = px.area(dpd_long, x="month", y="pos", color="bucket",
+                       category_orders={"bucket": list(bucket_labels.values())},
+                       color_discrete_map={"Current": TEAL, "1-30 DPD": GOLD, "31-60 DPD": "#D9822B",
+                                            "61-90 DPD": CORAL, "90+ DPD": "#7A2418"})
+        fig.update_layout(margin=dict(t=10, b=10, l=10, r=10), height=360,
+                           xaxis_title="", yaxis_title="Rs. Crs")
+        st.plotly_chart(fig, use_container_width=True)
+
+        st.divider()
+        st.subheader("Roll-rate matrix")
+        st.caption("Rate = this month's higher-bucket balance ÷ last month's adjacent lower-bucket balance "
+                   "— the standard approximation from snapshot bucket balances (see assumption #4, "
+                   "sql/06_schema_delinquency.sql). Not a loan-level roll trace.")
+        roll_scope = st.radio("Scope", ["Pool-wide", "By product"], horizontal=True, key="roll_scope")
+        if roll_scope == "Pool-wide":
+            roll_df = q("SELECT * FROM calc.roll_rate_pool_wide ORDER BY month")
+        else:
+            products_df = q("SELECT DISTINCT product, instrument_type FROM calc.roll_rate_by_product "
+                             "ORDER BY product, instrument_type")
+            products_df["label"] = products_df["product"] + " · " + products_df["instrument_type"]
+            product_choice = st.selectbox("Product / instrument", products_df["label"])
+            prod, instr = products_df.loc[products_df["label"] == product_choice, ["product", "instrument_type"]].iloc[0]
+            roll_df = q("SELECT month, roll_0_to_30, roll_30_to_60, roll_60_to_90, roll_90_to_90plus "
+                        "FROM calc.roll_rate_by_product WHERE product = %(p)s AND instrument_type = %(i)s "
+                        "ORDER BY month", {"p": prod, "i": instr})
+
+        if roll_df.empty or roll_df.drop(columns=["month"]).isna().all().all():
+            st.info("Not enough consecutive months of data yet to compute a roll rate for this scope.")
+        else:
+            roll_matrix = roll_df.set_index("month")[
+                ["roll_0_to_30", "roll_30_to_60", "roll_60_to_90", "roll_90_to_90plus"]
+            ].T
+            roll_matrix.index = ["0 → 1-30", "1-30 → 31-60", "31-60 → 61-90", "61-90 → 90+"]
+            fig2 = px.imshow(roll_matrix, aspect="auto", color_continuous_scale="Oranges",
+                              labels=dict(x="Month", y="Transition", color="Roll rate"))
+            fig2.update_xaxes(tickformat="%b-%y")
+            fig2.update_layout(margin=dict(t=10, b=10, l=10, r=10), height=320)
+            st.plotly_chart(fig2, use_container_width=True)
+
+        st.divider()
+        st.subheader("Cumulative default rate by vintage")
+        vintage_df = q("SELECT * FROM calc.vintage_default_curve WHERE month_on_book >= 0 ORDER BY vintage_quarter, month_on_book")
+        if vintage_df.empty:
+            st.info("No vintage data available.")
+        else:
+            fig3 = px.line(vintage_df, x="month_on_book", y="cumulative_default_rate", color="vintage_quarter",
+                            markers=True)
+            fig3.update_layout(margin=dict(t=10, b=10, l=10, r=10), height=380,
+                                xaxis_title="Month on book", yaxis_title="Cumulative default rate",
+                                yaxis_tickformat=".2%", legend_title="Vintage (origination quarter)")
+            st.plotly_chart(fig3, use_container_width=True)
+
+        st.divider()
+        st.subheader("CPR & WAL trend")
+        st.caption("WAL uses a closed-form constant-paydown-rate approximation, not a full projected cash-flow "
+                   "schedule — see risk_metrics.py for the formula and why. Both are recomputed every month "
+                   "from a trailing 3-month average of scheduled amortization + prepayment (SMM).")
+        cpr_deal_choice = st.selectbox("Select deal", dq_deals["deal_id"],
+                                         format_func=lambda x: dpd_labels.get(x, x), key="cpr_deal")
+        smm_df = q("""
+            SELECT deal_id, month, beginning_pos, scheduled_principal_payout, smm
+            FROM calc.deal_smm_cpr WHERE deal_id = %(d)s ORDER BY month
+        """, {"d": cpr_deal_choice})
+
+        if smm_df.empty or smm_df["smm"].isna().all():
+            st.info("Not enough consecutive 'Available' months for this deal to compute CPR/WAL yet.")
+        else:
+            trend_df = risk_metrics.add_rolling_cpr_wal(smm_df)
+            c1, c2 = st.columns(2)
+            with c1:
+                fig4 = px.line(trend_df, x="month", y="cpr_trailing", markers=True)
+                fig4.update_traces(line_color=NAVY, marker=dict(color=NAVY))
+                fig4.update_layout(margin=dict(t=10, b=10, l=10, r=10), height=320,
+                                    xaxis_title="", yaxis_title="Trailing annualized CPR", yaxis_tickformat=".1%")
+                st.markdown("###### Annualized CPR (trailing 3-month)")
+                st.plotly_chart(fig4, use_container_width=True)
+            with c2:
+                fig5 = px.line(trend_df, x="month", y="wal_years", markers=True)
+                fig5.update_traces(line_color=TEAL, marker=dict(color=TEAL))
+                fig5.update_layout(margin=dict(t=10, b=10, l=10, r=10), height=320,
+                                    xaxis_title="", yaxis_title="WAL (years)")
+                st.markdown("###### Weighted average life (approx.)")
+                st.plotly_chart(fig5, use_container_width=True)
+
+# ==============================================================
+# PAGE 6: STRESS TESTING
+# Forward-looking projection engine lives in stress_engine.py (which
+# leans on risk_metrics.py for the paydown/WAL math) -- this page's job
+# is ONLY to pull the deal's current state out of Postgres, build the
+# plain dict stress_engine.run_stress_scenario() expects, and display
+# the result. Senior-tranche PTC deals only -- see stress_engine.py's
+# module docstring (assumption #7) for why.
+# ==============================================================
+elif page == "Stress Testing":
+    page_header("Stress testing — CE cover ratio & WAL under shocked assumptions",
+                "Demo-grade straight-line projection off each deal's own trailing roll rates — "
+                "see stress_engine.py for the full methodology and every simplification made.")
+
+    stress_deals = q("""
+        SELECT DISTINCT d.deal_id, d.deal_name
+        FROM raw.deals d
+        JOIN raw.monthly_waterfall w ON w.deal_id = d.deal_id
+        JOIN raw.monthly_delinquency dq ON dq.deal_id = d.deal_id
+        WHERE d.tranche = 'Senior'
+        ORDER BY d.deal_name
+    """)
+
+    if stress_deals.empty:
+        st.info("No Senior-tranche deal has both waterfall and delinquency data yet — "
+                "run generate_synthetic_data.py / load_to_postgres.py first.")
+    else:
+        deal_label_map = dict(zip(stress_deals["deal_id"], stress_deals["deal_name"]))
+        stress_deal_id = st.selectbox("Select deal (Senior tranche only)", stress_deals["deal_id"],
+                                        format_func=lambda x: deal_label_map[x])
+
+        mis_hist = q("""
+            SELECT month, closing_pos_investor_share, total_pool_outstanding,
+                   total_principal_payout, scheduled_principal_payout
+            FROM raw.monthly_mis
+            WHERE deal_id = %(d)s AND data_status = 'Available'
+            ORDER BY month
+        """, {"d": stress_deal_id})
+        mis_hist["beginning_pos"] = mis_hist["closing_pos_investor_share"].shift(1)
+        mis_hist["prepayment_amount"] = (mis_hist["total_principal_payout"]
+                                          - mis_hist["scheduled_principal_payout"]).clip(lower=0)
+        denom = mis_hist["beginning_pos"] - mis_hist["scheduled_principal_payout"]
+        mis_hist["smm"] = mis_hist["prepayment_amount"] / denom
+        mis_hist.loc[denom <= 0, "smm"] = None
+        mis_valid = mis_hist.dropna(subset=["beginning_pos"]).copy()
+        mis_valid["deal_id"] = stress_deal_id
+
+        dq_hist = q("""
+            SELECT month, pos_0dpd, pos_1_30dpd, pos_31_60dpd, pos_61_90dpd, pos_90plus_dpd,
+                   cumulative_default_amount
+            FROM raw.monthly_delinquency WHERE deal_id = %(d)s ORDER BY month
+        """, {"d": stress_deal_id})
+
+        wf_hist = q("""
+            SELECT month, ce_closing_balance FROM raw.monthly_waterfall
+            WHERE deal_id = %(d)s ORDER BY month
+        """, {"d": stress_deal_id})
+
+        if len(mis_valid) < 3 or len(dq_hist) < 4 or wf_hist.empty:
+            st.info("Not enough trailing history for this deal yet to build a stable set of "
+                    "current-state inputs (need at least a few consecutive available months).")
+        else:
+            trend = risk_metrics.add_rolling_cpr_wal(
+                mis_valid[["deal_id", "month", "beginning_pos", "scheduled_principal_payout", "smm"]]
+            )
+            latest_trend = trend.iloc[-1]
+
+            dq_hist = dq_hist.merge(
+                mis_hist[["month", "total_pool_outstanding"]], on="month", how="left"
+            )
+            dq_hist["f0"] = dq_hist["pos_0dpd"] / dq_hist["total_pool_outstanding"]
+            dq_hist["f1"] = dq_hist["pos_1_30dpd"] / dq_hist["total_pool_outstanding"]
+            dq_hist["f2"] = dq_hist["pos_31_60dpd"] / dq_hist["total_pool_outstanding"]
+            dq_hist["f3"] = dq_hist["pos_61_90dpd"] / dq_hist["total_pool_outstanding"]
+            dq_hist["f4"] = dq_hist["pos_90plus_dpd"] / dq_hist["total_pool_outstanding"]
+            latest_dq = dq_hist.iloc[-1]
+
+            # Trailing (last 6 obs) empirical roll rates -- same balance-snapshot
+            # method as calc.roll_rate_deal_level, computed here in pandas since
+            # we need it per-deal on demand rather than pre-materialized.
+            r01 = (dq_hist["pos_1_30dpd"] / dq_hist["pos_0dpd"].shift(1)).tail(6).mean()
+            r12 = (dq_hist["pos_31_60dpd"] / dq_hist["pos_1_30dpd"].shift(1)).tail(6).mean()
+            r23 = (dq_hist["pos_61_90dpd"] / dq_hist["pos_31_60dpd"].shift(1)).tail(6).mean()
+            r34 = (dq_hist["pos_90plus_dpd"] / dq_hist["pos_61_90dpd"].shift(1)).tail(6).mean()
+            write_off_rate = ((dq_hist["cumulative_default_amount"].diff())
+                               / dq_hist["pos_90plus_dpd"].shift(1)).tail(6).mean()
+
+            deal_state = dict(
+                beginning_pos=float(mis_hist.iloc[-1]["closing_pos_investor_share"]),
+                scheduled_rate=float(latest_trend["scheduled_rate_trailing"] or 0),
+                smm=float(latest_trend["smm_trailing"] or 0),
+                ce_balance=float(wf_hist.iloc[-1]["ce_closing_balance"] or 0),
+                pool_total=float(latest_dq["total_pool_outstanding"] or 0),
+                dpd_fractions=tuple(float(latest_dq[c]) if pd.notna(latest_dq[c]) else 0.0
+                                     for c in ["f0", "f1", "f2", "f3", "f4"]),
+                roll_rates=tuple(float(r) if pd.notna(r) else 0.0 for r in (r01, r12, r23, r34)),
+                write_off_rate=float(write_off_rate) if pd.notna(write_off_rate) else 0.0,
+                tranche="Senior",
+            )
+
+            st.markdown("##### Scenario")
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                stress_factor = st.select_slider("Delinquency stress (× current 90+ roll rates)",
+                                                   options=[1.0, 1.5, 2.0, 3.0], value=1.0)
+            with c2:
+                prepay_shock = st.slider("Prepayment shock (CPR, percentage points)",
+                                           -10.0, 10.0, 0.0, 0.5)
+            with c3:
+                horizon = st.select_slider("Projection horizon (months)", options=[12, 24, 36], value=24)
+
+            base_df, base_summary = stress_engine.run_stress_scenario(deal_state, 1.0, 0.0, horizon)
+            scenario_df, scenario_summary = stress_engine.run_stress_scenario(
+                deal_state, stress_factor, prepay_shock, horizon
+            )
+
+            st.divider()
+            threshold = st.slider("Flag threshold (CE cover ratio, x)", 0.0, 3.0, 1.0, 0.1, key="stress_threshold")
+
+            compare_df = pd.concat([
+                base_df.assign(scenario="Base case (no stress)"),
+                scenario_df.assign(scenario=f"{stress_factor:.1f}× delinquency, {prepay_shock:+.1f}pp CPR"),
+            ])
+            fig = px.line(compare_df, x="month_index", y="ce_cover_ratio", color="scenario", markers=True,
+                          color_discrete_map={"Base case (no stress)": TEAL})
+            fig.add_hline(y=threshold, line_dash="dash", line_color=CORAL,
+                          annotation_text=f"Threshold {threshold:.1f}x", annotation_position="top left")
+            fig.update_layout(margin=dict(t=10, b=10, l=10, r=10), height=380,
+                               xaxis_title="Month (projected)", yaxis_title="CE cover ratio (x)",
+                               legend_title="")
+            st.plotly_chart(fig, use_container_width=True)
+
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Base WAL", f"{base_summary['wal_years']:.2f} yrs" if base_summary["wal_years"] else "—")
+            c2.metric("Stressed WAL", f"{scenario_summary['wal_years']:.2f} yrs" if scenario_summary["wal_years"] else "—",
+                      delta=(f"{scenario_summary['wal_years'] - base_summary['wal_years']:+.2f} yrs"
+                             if base_summary["wal_years"] and scenario_summary["wal_years"] else None))
+            c3.metric("CE depletion month (base)",
+                      base_summary["ce_depleted_month"] or f"Not within {horizon}mo")
+            c4.metric("CE depletion month (stressed)",
+                      scenario_summary["ce_depleted_month"] or f"Not within {horizon}mo")
+
+            # Plain-language auto-summary
+            deal_display_name = deal_label_map[stress_deal_id]
+            lines = []
+            if scenario_summary["ce_depleted_month"]:
+                lines.append(
+                    f"Under a {stress_factor:.1f}× delinquency stress with a {prepay_shock:+.1f}pp CPR shock, "
+                    f"**{deal_display_name}**'s credit enhancement is projected to be **fully depleted by month "
+                    f"{scenario_summary['ce_depleted_month']}** of the {horizon}-month projection."
+                )
+            else:
+                lines.append(
+                    f"Under a {stress_factor:.1f}× delinquency stress with a {prepay_shock:+.1f}pp CPR shock, "
+                    f"**{deal_display_name}**'s credit enhancement is **not** projected to fully deplete "
+                    f"within {horizon} months (ending cover ratio "
+                    f"{scenario_summary['final_ce_cover_ratio']:.2f}x)." if scenario_summary["final_ce_cover_ratio"] is not None
+                    else f"CE is not projected to deplete within {horizon} months."
+                )
+            if scenario_summary["payout_impacted_month"]:
+                lines.append(
+                    f"Senior tranche payout is projected to be **impacted starting month "
+                    f"{scenario_summary['payout_impacted_month']}**, once CE can no longer fully cover that "
+                    f"month's write-offs."
+                )
+            else:
+                lines.append("Senior tranche payout is not projected to be impacted within the horizon.")
+            wal_shift = (scenario_summary["wal_years"] - base_summary["wal_years"]
+                         if base_summary["wal_years"] and scenario_summary["wal_years"] else None)
+            if wal_shift is not None:
+                direction = "longer" if wal_shift > 0 else "shorter"
+                lines.append(f"WAL shifts **{abs(wal_shift):.2f} years {direction}** than the base case "
+                             f"({base_summary['wal_years']:.2f}y → {scenario_summary['wal_years']:.2f}y).")
+            st.markdown(f'<div class="exec-narrative">{" ".join(lines)}</div>', unsafe_allow_html=True)
+
+            with st.expander("Current-state inputs used for this projection (for transparency)"):
+                st.json({k: (list(v) if isinstance(v, tuple) else v) for k, v in deal_state.items()})
+
+# ==============================================================
+# PAGE 7: FUNDING & ALM
+# All-in-cost math lives in calc.deal_funding_cost (sql/07_schema_funding.sql)
+# -- SQL-only, since it doesn't need WAL. The WAL-vs-tenor ALM check DOES
+# need WAL, so that half is computed here in Python via risk_metrics.py,
+# same pattern as the Credit Performance and Stress Testing pages.
+# ==============================================================
+elif page == "Funding & ALM":
+    page_header("Funding cost & ALM — all-in cost vs alternatives, WAL vs stated tenor",
+                "See sql/07_schema_funding.sql for the all-in-cost methodology and its "
+                "stated-tenor-vs-WAL caveat.")
+
+    st.subheader("All-in cost of funds")
+    st.caption("All-in cost = investor payout rate + servicing fee + one-time execution costs "
+               "amortized straight-line over the deal's STATED tenor (not actual WAL — see the "
+               "SQL file's assumption #3 for why that understates the true effective cost).")
+
+    funding_df = q("SELECT * FROM calc.deal_funding_cost")
+    if funding_df.empty:
+        st.info("No data in calc.deal_funding_cost yet — run generate_synthetic_data.py / "
+                "load_to_postgres.py after applying sql/07_schema_funding.sql.")
+    else:
+        # Illustrative-only alternative funding cost benchmarks. NOT live
+        # market data and NOT IIFL's actual borrowing cost on any facility
+        # -- typical indicative levels for an NBFC of this profile, for a
+        # demo comparison only.
+        ILLUSTRATIVE_ALTERNATIVES = {
+            "NCD (~3yr, AA-rated)": 8.75,
+            "Term loan (working capital)": 9.75,
+            "Commercial paper (<1yr)": 7.50,
+        }
+        st.caption("⚠️ NCD / term loan / CP figures below are **illustrative, typical-market placeholders** "
+                   "— not live rates and not IIFL's actual cost of funds on any real facility.")
+
+        valid = funding_df.dropna(subset=["all_in_cost_pct", "amount_securitised_deal_date"])
+        weighted_all_in = (
+            (valid["all_in_cost_pct"] * valid["amount_securitised_deal_date"]).sum()
+            / valid["amount_securitised_deal_date"].sum()
+        ) if not valid.empty else None
+
+        compare_rows = [{"label": "Securitisation — portfolio weighted avg all-in cost", "rate": weighted_all_in}]
+        compare_rows += [{"label": k, "rate": v} for k, v in ILLUSTRATIVE_ALTERNATIVES.items()]
+        compare_df = pd.DataFrame(compare_rows)
+        fig = px.bar(compare_df, x="label", y="rate", color="label",
+                     color_discrete_sequence=[NAVY, "#8FA6B3", "#8FA6B3", "#8FA6B3"])
+        fig.update_layout(showlegend=False, margin=dict(t=10, b=10, l=10, r=10), height=340,
+                           xaxis_title="", yaxis_title="Rate (%)")
+        st.plotly_chart(fig, use_container_width=True)
+
+        st.markdown("###### By product / instrument")
+        by_product = valid.groupby(["underlying", "instrument_type"]).apply(
+            lambda g: pd.Series({
+                "weighted_all_in_cost_pct": (g["all_in_cost_pct"] * g["amount_securitised_deal_date"]).sum()
+                                             / g["amount_securitised_deal_date"].sum(),
+                "deal_count": len(g),
+            }), include_groups=False
+        ).reset_index()
+        st.dataframe(by_product, use_container_width=True)
+
+        with st.expander("Per-deal detail"):
+            st.dataframe(
+                funding_df[["deal_name", "investor_name", "instrument_type", "underlying",
+                            "investor_payout_rate", "servicing_fee_pct", "upfront_cost_amortized_pct",
+                            "all_in_cost_pct", "stated_tenor_months"]],
+                use_container_width=True,
+            )
+
+    st.divider()
+    st.subheader("WAL vs stated tenor — ALM mismatch check")
+    st.caption("WAL here is the same trailing closed-form approximation used on the Credit Performance "
+               "page (risk_metrics.py) — a real ALM check would use full projected cash flows, not this.")
+    st.warning("⚠️ **Known dataset limitation**: this generator's scheduled amortization rate isn't tied "
+               "to product or stated tenor, so longer-stated-tenor products (HCF, LAP) will show up as "
+               "systematically \"mismatched\" here — that's a gap in the synthetic data, not a real ALM "
+               "signal on those specific deals. See sql/07_schema_funding.sql assumption #5.")
+
+    smm_all = q("""
+        SELECT s.deal_id, s.month, s.beginning_pos, s.scheduled_principal_payout, s.smm
+        FROM calc.deal_smm_cpr s
+        JOIN raw.deals d ON d.deal_id = s.deal_id
+        WHERE d.stated_tenor_months IS NOT NULL
+        ORDER BY s.deal_id, s.month
+    """)
+    if smm_all.empty:
+        st.info("No SMM/CPR history available yet to compute WAL for the ALM check.")
+    else:
+        wal_trend_all = risk_metrics.add_rolling_cpr_wal(smm_all)
+        latest_wal = wal_trend_all.sort_values("month").groupby("deal_id").tail(1)[["deal_id", "wal_years"]]
+
+        deal_tenor = q("""
+            SELECT deal_id, deal_name, investor_name, instrument_type, underlying, stated_tenor_months
+            FROM raw.deals WHERE stated_tenor_months IS NOT NULL
+        """)
+        alm_df = deal_tenor.merge(latest_wal, on="deal_id", how="inner").dropna(subset=["wal_years"])
+        alm_df["stated_tenor_years"] = alm_df["stated_tenor_months"] / 12.0
+        alm_df["wal_minus_tenor_years"] = alm_df["wal_years"] - alm_df["stated_tenor_years"]
+
+        if alm_df.empty:
+            st.info("Not enough deals with both a WAL estimate and a stated tenor yet.")
+        else:
+            mismatch_threshold = st.slider("Flag if |WAL − stated tenor| exceeds (years)", 0.25, 5.0, 1.0, 0.25)
+            alm_df["mismatched"] = alm_df["wal_minus_tenor_years"].abs() > mismatch_threshold
+
+            fig2 = px.scatter(alm_df, x="stated_tenor_years", y="wal_years", color="mismatched",
+                               hover_data=["deal_name", "investor_name", "instrument_type"],
+                               color_discrete_map={True: CORAL, False: TEAL})
+            max_axis = max(alm_df["stated_tenor_years"].max(), alm_df["wal_years"].max()) * 1.05
+            fig2.add_shape(type="line", x0=0, y0=0, x1=max_axis, y1=max_axis,
+                           line=dict(color=SLATE, dash="dot"))
+            fig2.update_layout(margin=dict(t=10, b=10, l=10, r=10), height=420,
+                               xaxis_title="Stated tenor (years)", yaxis_title="WAL (years, trailing estimate)",
+                               legend_title="Mismatched")
+            st.plotly_chart(fig2, use_container_width=True)
+
+            mismatched_df = alm_df.loc[alm_df["mismatched"]].sort_values(
+                "wal_minus_tenor_years", key=abs, ascending=False
+            )
+            st.markdown(f"###### {len(mismatched_df)} of {len(alm_df)} deals flagged (threshold: "
+                        f"{mismatch_threshold:.2f} years)")
+            if not mismatched_df.empty:
+                st.dataframe(
+                    mismatched_df[["deal_name", "investor_name", "instrument_type", "underlying",
+                                   "stated_tenor_years", "wal_years", "wal_minus_tenor_years"]],
+                    use_container_width=True,
+                )
+
+# ==============================================================
+# PAGE 8: REGULATORY COMPLIANCE
+# A simple compliance SUMMARY, deliberately not a rules engine -- see
+# sql/08_schema_regulatory.sql for what each check does and doesn't
+# capture (especially the MHP simplification and the true-sale note's
+# "assumption, not legal opinion" caveat).
+# ==============================================================
+elif page == "Regulatory Compliance":
+    page_header("Regulatory markers — MRR, MHP, true-sale assumptions",
+                "A simple compliance summary for a human to review, not an automated rules engine. "
+                "See sql/08_schema_regulatory.sql for every simplification made.")
+
+    reg_df = q("SELECT * FROM calc.regulatory_compliance_summary")
+    if reg_df.empty:
+        st.info("No data in calc.regulatory_compliance_summary yet — run generate_synthetic_data.py "
+                "/ load_to_postgres.py after applying sql/08_schema_regulatory.sql.")
+    else:
+        st.subheader("MRR (Minimum Retention Requirement)")
+        st.caption("Threshold is adjustable here rather than fixed, per the Phase 5 requirement — "
+                   "calc.mrr_compliance (Phase 1) still exists as a fixed-5% reference view.")
+        mrr_threshold = st.select_slider("MRR compliance threshold", options=[0.05, 0.10], value=0.05,
+                                           format_func=lambda x: f"{x:.0%}")
+        reg_df["mrr_compliance_status"] = reg_df["mrr_percent"].apply(
+            lambda x: "Unknown" if pd.isna(x) else ("Compliant" if x >= mrr_threshold else "Non-Compliant")
+        )
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Compliant", int((reg_df["mrr_compliance_status"] == "Compliant").sum()))
+        c2.metric("Non-Compliant", int((reg_df["mrr_compliance_status"] == "Non-Compliant").sum()))
+        c3.metric("Total deals", len(reg_df))
+        mrr_non_compliant = reg_df.loc[reg_df["mrr_compliance_status"] == "Non-Compliant"]
+        if not mrr_non_compliant.empty:
+            with st.expander(f"{len(mrr_non_compliant)} non-compliant deal(s)"):
+                st.dataframe(
+                    mrr_non_compliant[["deal_name", "investor_name", "instrument_type", "mrr_percent"]],
+                    use_container_width=True,
+                )
+
+        st.divider()
+        st.subheader("MHP (Minimum Holding Period)")
+        st.caption("Required MHP is an ILLUSTRATIVE simplification (≤24mo stated tenor → 3 months, "
+                   "otherwise → 6 months) of RBI's actual tenor-and-repayment-frequency matrix — "
+                   "see sql/08_schema_regulatory.sql assumption #2. Not a verbatim reproduction of the regulation.")
+        mhp_counts = reg_df["mhp_compliance_status"].value_counts()
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Compliant", int(mhp_counts.get("Compliant", 0)))
+        c2.metric("Non-Compliant", int(mhp_counts.get("Non-Compliant", 0)))
+        c3.metric("Unknown", int(mhp_counts.get("Unknown", 0)))
+        mhp_non_compliant = reg_df.loc[reg_df["mhp_compliance_status"] == "Non-Compliant"]
+        if not mhp_non_compliant.empty:
+            mhp_detail = q("""
+                SELECT deal_name, investor_name, instrument_type, stated_tenor_months,
+                       underlying_seasoning_months
+                FROM calc.mhp_compliance WHERE mhp_compliance_status = 'Non-Compliant'
+            """)
+            with st.expander(f"{len(mhp_non_compliant)} non-compliant deal(s)"):
+                st.dataframe(mhp_detail, use_container_width=True)
+
+        st.divider()
+        st.subheader("True-sale assumptions")
+        st.caption("⚠️ These are this project's ASSUMPTIONS about true-sale status, not a legal "
+                   "determination — a real true-sale opinion requires actual review of the transfer "
+                   "documents by counsel. See sql/08_schema_regulatory.sql assumption #4.")
+        unverified = reg_df.loc[reg_df["true_sale_criteria_met"] == False]
+        c1, c2 = st.columns(2)
+        c1.metric("Assumed true sale", int((reg_df["true_sale_criteria_met"] == True).sum()))
+        c2.metric("Flagged — not independently verified", len(unverified))
+        if not unverified.empty:
+            with st.expander(f"{len(unverified)} deal(s) flagged for legal review"):
+                st.dataframe(
+                    unverified[["deal_name", "investor_name", "instrument_type", "true_sale_assumption_note"]],
+                    use_container_width=True,
+                )
+
+        st.divider()
+        st.subheader("Combined compliance summary")
+        summary_df = reg_df.copy()
+        summary_df["overall_flag"] = (
+            (summary_df["mrr_compliance_status"] == "Non-Compliant")
+            | (summary_df["mhp_compliance_status"] == "Non-Compliant")
+            | (summary_df["true_sale_criteria_met"] == False)
+        )
+        st.caption(f"{int(summary_df['overall_flag'].sum())} of {len(summary_df)} deals have at least "
+                   f"one open flag (MRR, MHP, or true-sale).")
+        st.dataframe(
+            summary_df[["deal_name", "investor_name", "instrument_type", "mrr_compliance_status",
+                        "mhp_compliance_status", "true_sale_criteria_met", "overall_flag"]]
+            .sort_values("overall_flag", ascending=False),
+            use_container_width=True,
+        )
+
+# ==============================================================
+# PAGE 9: UPLOAD MONTHLY MIS (admin-only)
 # ==============================================================
 elif page == "Upload monthly MIS":
     # Hard server-side gate -- never trust that the sidebar only showed this
@@ -658,7 +1297,7 @@ elif page == "Upload monthly MIS":
             st.cache_resource.clear()
 
 # ==============================================================
-# PAGE 5: USER MANAGEMENT (admin-only)
+# PAGE 10: USER MANAGEMENT (admin-only)
 # ==============================================================
 elif page == "User management":
     if st.session_state.user_role != "admin":

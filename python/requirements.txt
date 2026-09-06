@@ -1,0 +1,6 @@
+streamlit
+psycopg2-binary
+pandas
+plotly
+bcrypt
+python-dateutil
